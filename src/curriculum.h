@@ -25,7 +25,7 @@ void mastery_record(MasteryTracker *m, int correct);
 /* True once the window is full and at least MASTERY_THRESHOLD are correct. */
 int mastery_met(const MasteryTracker *m);
 
-#define SCHED_MAX_FACTS 32
+#define SCHED_MAX_FACTS 80 /* Stage 1 uses 20, Stage 2 uses 63; headroom for later stages */
 #define SCHED_NUM_BUCKETS 4 /* 0 = just missed (resurfaces soonest) */
 
 typedef struct {

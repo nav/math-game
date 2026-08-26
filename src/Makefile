@@ -11,7 +11,7 @@ CC ?= cc
 CFLAGS ?= -Wall -Wextra -std=c99 -O2
 FONT_PATH ?= ../assets/DejaVuSans-Bold.ttf
 
-COMMON_SRCS = game.c viewport.c ttf_font.c curriculum.c progress.c stage_subitizing.c stage_subitizing_draw.c
+COMMON_SRCS = game.c viewport.c ttf_font.c curriculum.c progress.c stage_subitizing.c stage_subitizing_draw.c stage_addition.c stage_addition_draw.c
 TARGET = math_game
 FT_CFLAGS = $(shell pkg-config --cflags freetype2)
 FT_LIBS = $(shell pkg-config --libs freetype2)
@@ -43,7 +43,7 @@ run: $(TARGET)
 # Deliberately excludes stage_subitizing_draw.c, viewport.c and any
 # platform_*.c: those need a real display backend, this doesn't.
 test:
-	$(CC) $(CFLAGS) curriculum.c progress.c stage_subitizing.c \
+	$(CC) $(CFLAGS) curriculum.c progress.c stage_subitizing.c stage_addition.c \
 		../tests/test_curriculum.c -o /tmp/test_curriculum
 	/tmp/test_curriculum
 

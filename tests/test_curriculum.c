@@ -7,6 +7,7 @@
 
 #include "../src/curriculum.h"
 #include "../src/progress.h"
+#include "../src/stage_addition.h"
 #include "../src/stage_subitizing.h"
 
 static void test_mastery_not_met_until_window_full(void) {
@@ -169,6 +170,130 @@ static void test_subitize_pool_is_cumulative_and_stable(void) {
     assert(count_seen == 1);
 }
 
+static void test_addition_step_fact_counts_and_starts(void) {
+    assert(addition_step_new_fact_count(ASTEP_SMALL_SUMS) == 25);
+    assert(addition_step_new_fact_count(ASTEP_BONDS_TO_10) == 9);
+    assert(addition_step_new_fact_count(ASTEP_COUNTING_ON) == 12);
+    assert(addition_step_new_fact_count(ASTEP_DOUBLES) == 9);
+    assert(addition_step_new_fact_count(ASTEP_MAKE_TEN) == 8);
+    assert(addition_step_new_fact_count(ASTEP_DONE) == 0);
+
+    assert(addition_step_start_index(ASTEP_SMALL_SUMS) == 0);
+    assert(addition_step_start_index(ASTEP_BONDS_TO_10) == 25);
+    assert(addition_step_start_index(ASTEP_COUNTING_ON) == 34);
+    assert(addition_step_start_index(ASTEP_DOUBLES) == 46);
+    assert(addition_step_start_index(ASTEP_MAKE_TEN) == 55);
+    assert(addition_step_start_index(ASTEP_DONE) == 63);
+}
+
+static void test_addition_pool_is_cumulative_and_stable(void) {
+    AdditionFact pool_small[ADDITION_MAX_FACTS];
+    AdditionFact pool_all[ADDITION_MAX_FACTS];
+    int n_small = addition_build_pool(ASTEP_SMALL_SUMS, pool_small);
+    int n_all = addition_build_pool(ASTEP_DONE, pool_all);
+    assert(n_small == 25);
+    assert(n_all == ADDITION_MAX_FACTS);
+    for (int i = 0; i < n_small; i++) {
+        assert(pool_small[i].kind == pool_all[i].kind);
+        assert(pool_small[i].a == pool_all[i].a);
+        assert(pool_small[i].b == pool_all[i].b);
+    }
+}
+
+static void test_addition_small_sums_use_low_operands(void) {
+    AdditionFact pool[ADDITION_MAX_FACTS];
+    int n = addition_build_pool(ASTEP_SMALL_SUMS, pool);
+    assert(n == 25);
+    for (int i = 0; i < n; i++) {
+        assert(pool[i].kind == ADD_SMALL_SUM);
+        assert(pool[i].a >= 1 && pool[i].a <= 5);
+        assert(pool[i].b >= 1 && pool[i].b <= 5);
+        assert(pool[i].answer == pool[i].a + pool[i].b);
+    }
+}
+
+static void test_addition_fact_has_diagram(void) {
+    assert(!addition_fact_has_diagram(ADD_SMALL_SUM));
+    assert(!addition_fact_has_diagram(ADD_BONDS_TO_10));
+    assert(addition_fact_has_diagram(ADD_COUNTING_ON));
+    assert(!addition_fact_has_diagram(ADD_DOUBLES));
+    assert(addition_fact_has_diagram(ADD_MAKE_TEN));
+}
+
+static void test_addition_bonds_always_sum_to_ten(void) {
+    AdditionFact pool[ADDITION_MAX_FACTS];
+    int n = addition_build_pool(ASTEP_DONE, pool);
+    int start = addition_step_start_index(ASTEP_BONDS_TO_10);
+    int end = start + addition_step_new_fact_count(ASTEP_BONDS_TO_10);
+    assert(end <= n);
+    for (int i = start; i < end; i++) {
+        assert(pool[i].kind == ADD_BONDS_TO_10);
+        assert(pool[i].a + pool[i].b == 10);
+        assert(pool[i].answer == pool[i].b); /* the unknown addend */
+    }
+}
+
+static void test_addition_make_ten_always_requires_bridging(void) {
+    AdditionFact pool[ADDITION_MAX_FACTS];
+    int n = addition_build_pool(ASTEP_MAKE_TEN, pool);
+    int start = addition_step_start_index(ASTEP_MAKE_TEN);
+    int end = start + addition_step_new_fact_count(ASTEP_MAKE_TEN);
+    assert(end <= n);
+    for (int i = start; i < end; i++) {
+        assert(pool[i].kind == ADD_MAKE_TEN);
+        /* Bridging only makes sense if a itself isn't already a bond-of-10
+         * partner sitting exactly at 10, and b must exceed the gap to 10
+         * or there's nothing to bridge. */
+        int gap = 10 - pool[i].a;
+        assert(pool[i].b > gap);
+        assert(pool[i].a + pool[i].b > 10);
+        assert(pool[i].answer == pool[i].a + pool[i].b);
+    }
+}
+
+static void test_addition_counting_on_uses_small_second_addend(void) {
+    AdditionFact pool[ADDITION_MAX_FACTS];
+    int n = addition_build_pool(ASTEP_COUNTING_ON, pool);
+    int start = addition_step_start_index(ASTEP_COUNTING_ON);
+    int end = start + addition_step_new_fact_count(ASTEP_COUNTING_ON);
+    assert(end <= n);
+    for (int i = start; i < end; i++) {
+        assert(pool[i].kind == ADD_COUNTING_ON);
+        assert(pool[i].b >= 1 && pool[i].b <= 3); /* small enough to count on */
+        assert(pool[i].a >= pool[i].b);            /* start from the larger */
+    }
+}
+
+/* Simulates the game's own interleaving loop (scheduler pick -> record)
+ * once every strategy is unlocked, and checks no single strategy runs for
+ * an implausibly long unbroken streak - the actual research requirement
+ * behind "interleaved once introduced". */
+static void test_addition_interleaves_across_strategies(void) {
+    AdditionFact pool[ADDITION_MAX_FACTS];
+    int n = addition_build_pool(ASTEP_DONE, pool);
+    FactScheduler s;
+    sched_init(&s, n);
+
+    srand(7);
+    int longest_streak = 0, current_streak = 0;
+    AdditionFactKind last_kind = pool[0].kind;
+    for (int i = 0; i < 500; i++) {
+        int fact_id = sched_pick(&s);
+        sched_record(&s, fact_id, 1); /* always "correct" to stress the tail */
+        AdditionFactKind kind = pool[fact_id].kind;
+        if (kind == last_kind) {
+            current_streak++;
+        } else {
+            current_streak = 1;
+            last_kind = kind;
+        }
+        if (current_streak > longest_streak) longest_streak = current_streak;
+    }
+    /* Not a hard pedagogical bound - just guards against the scheduler
+     * degenerating into long blocked runs of one strategy. */
+    assert(longest_streak < 30);
+}
+
 int main(void) {
     test_mastery_not_met_until_window_full();
     test_mastery_met_at_threshold();
@@ -181,6 +306,14 @@ int main(void) {
     test_sched_grow_preserves_existing_buckets();
     test_subitize_step_fact_counts_and_starts();
     test_subitize_pool_is_cumulative_and_stable();
+    test_addition_step_fact_counts_and_starts();
+    test_addition_pool_is_cumulative_and_stable();
+    test_addition_small_sums_use_low_operands();
+    test_addition_fact_has_diagram();
+    test_addition_bonds_always_sum_to_ten();
+    test_addition_make_ten_always_requires_bridging();
+    test_addition_counting_on_uses_small_second_addend();
+    test_addition_interleaves_across_strategies();
     printf("all tests passed\n");
     return 0;
 }

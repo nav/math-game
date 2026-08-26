@@ -497,6 +497,15 @@ get that for free, and leaving getty running fights the game for the tty.
 undifferentiated random-digit drill, per Common Core's OA progression.
 
 **Scope**, introduced in order and interleaved once each is unlocked:
+0. **Small sums** (plain `a + b = ?`, both addends 1-5, no strategy
+   framing) — added after real play-testing showed starting cold on an
+   unknown-addend problem (see step 1) was a harder on-ramp into symbolic
+   addition than a plain small sum, even right after Stage 1. Not in the
+   original research-derived scope, but consistent with it: this is
+   essentially the "direct modeling" precursor Carpenter et al.'s
+   progression describes before counting-on, which the original plan had
+   skipped on the (evidently wrong, for a cold start) assumption that solid
+   subitizing was a sufficient bridge straight into strategy-named addition.
 1. **Number bonds to 10** ("3 and __ make 10") — UK EYFS ELG target.
 2. **Counting-on** (start from the larger addend) — visualized via a simple
    number-line drawn with `vdraw_thick_line` plus tick marks.
@@ -513,7 +522,74 @@ sub-strategies before Stage 3 unlocks.
 have an addend requiring bridging, not trivially already at a bond-of-10);
 interleaving test (no long same-strategy run in the scheduled sequence).
 
-**Status**: Not Started
+**Status**: Complete for the scope below. Built in `stage_addition.c`
+(pure step/pool logic, host-testable) and `stage_addition_draw.c`
+(number-line and ten-frame rendering, depends on `viewport.h`), using the
+same cumulative/interleaved pool pattern as Stage 1 — this is the second
+content stage, so `game.c` now dispatches between Stage 1 and Stage 2 with
+a plain `if (curriculum_stage == STAGE_SUBITIZING) ... else ...` at the
+handful of points where their content actually differs (problem selection,
+answer check, rendering), rather than a generic plugin/dispatch-table
+abstraction — with exactly two stages, that's the boring, obvious choice;
+worth revisiting into a real table only once a third stage makes the
+branching unwieldy. Reaching Stage 1's `STEP_DONE` now transitions straight
+into Stage 2 instead of drilling Stage 1 forever (that dead-end only
+existed because Stage 2 didn't yet).
+
+Fact counts: 25 small sums (a,b=1..5), 9 bond pairs (a=1..9, b=10-a), 12
+counting-on pairs (smaller addend 1-3, larger 6-9), 9 doubles (n=1..9), 8
+make-ten pairs (a=6..9, two bridging values each) — 63 facts total, all
+sums ≤18. `curriculum.h`'s `SCHED_MAX_FACTS` was bumped from 32 to 80 to
+fit (48 after the first bump, then to 80 for the small-sums addition).
+Corrective feedback on a wrong answer shows the full solved equation (e.g.
+"6 + 4 = 10" for a bond, "7 + 5 = 12" otherwise), matching Stage 0's
+original design intent more literally than Stage 1's bare "It was N" (fine
+there since there's only one number in play).
+
+Anyone already partway through Stage 2 when this shipped has their
+addition progress reset to the new first step (small sums) — the
+mismatched fact count against their saved `progress.dat` trips Stage 0's
+existing corrupted-save fallback, which was a happy accident here rather
+than a deliberate migration. Their Stage 1 progress is untouched (it's
+saved under a separate `stage` value).
+
+Also fixed in this pass, from real device feedback: the mastery/step-
+transition message (`draw_centered(300, 70, ...)`) used a fixed large font
+size regardless of message length, so longer messages (e.g. "You're a
+counting star! Let's learn addition!", measured ~1728 virtual-units wide
+against the 1000-wide canvas) ran off both edges of the screen. Replaced
+with `draw_centered_fit`, which shrinks the font size to keep the text
+within a fixed max width instead of every caller having to hand-tune a
+safe size per message. `MASTERY_MSG_MS` was also bumped from 2200ms to
+3200ms per feedback that the message needed more time on screen.
+
+One more layout fix from real device feedback: `PROMPT_Y`/`ANS_Y` (380/460)
+were tuned for content with a diagram above it (Stage 1's dots, or
+counting-on/make-ten's diagrams) filling the top of the screen - reused
+as-is for a diagram-less addition fact (small sums, bonds, doubles), the
+equation text was stranded near the bottom with the whole upper half of the
+screen blank ("only occupying half the screen at bottom"). Added
+`addition_fact_has_diagram()` and, in `game.c`, layout constants that
+vertically center the prompt+answer block in the play area when there's no
+diagram above it, rather than anchoring to the diagram-shaped layout
+unconditionally.
+
+Also enlarged per feedback that the addition equation looked too small:
+`ADD_EQ_HEIGHT` (100, vs. Stage 1's `PROMPT_HEIGHT` of 70) is now addition's
+own font size, verified against actual measured glyph widths for the
+longest equations ("9 + 9 = 18" tops out at 588 of the 1000-wide canvas at
+this size — comfortable margin, unlike the earlier mastery-message bug
+where message length varied too much for any fixed size to be safe here).
+The vertical gap between equation and answer (`ADD_EQ_ANS_GAP`, 120) was
+widened accordingly so the taller glyphs can't run down into the answer
+line below them.
+
+Scope trimmed from the description above: near-doubles (n+n±1) aren't
+implemented, only plain doubles (n+n) — near-doubles would need its own
+fact-generation and answer-checking nuance (which near-double, ±1 in which
+direction) that didn't seem worth the complexity before this stage has even
+been played by a real child; add it as a fifth step if plain doubles proves
+insufficient in practice.
 
 ---
 
