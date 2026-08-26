@@ -11,7 +11,7 @@ CC ?= cc
 CFLAGS ?= -Wall -Wextra -std=c99 -O2
 FONT_PATH ?= ../assets/DejaVuSans-Bold.ttf
 
-COMMON_SRCS = game.c viewport.c ttf_font.c
+COMMON_SRCS = game.c viewport.c ttf_font.c curriculum.c progress.c stage_subitizing.c stage_subitizing_draw.c
 TARGET = math_game
 FT_CFLAGS = $(shell pkg-config --cflags freetype2)
 FT_LIBS = $(shell pkg-config --libs freetype2)
@@ -29,7 +29,7 @@ else
 	$(error Unknown PLATFORM '$(PLATFORM)', expected 'fbdev' or 'sdl')
 endif
 
-.PHONY: all clean run
+.PHONY: all clean run test
 all: $(TARGET)
 
 $(TARGET): $(SRCS)
@@ -38,5 +38,14 @@ $(TARGET): $(SRCS)
 run: $(TARGET)
 	./$(TARGET)
 
+# Host-only unit tests for the platform-independent curriculum engine
+# (mastery tracker + fact scheduler) and Stage 1's pure pool/step logic.
+# Deliberately excludes stage_subitizing_draw.c, viewport.c and any
+# platform_*.c: those need a real display backend, this doesn't.
+test:
+	$(CC) $(CFLAGS) curriculum.c progress.c stage_subitizing.c \
+		../tests/test_curriculum.c -o /tmp/test_curriculum
+	/tmp/test_curriculum
+
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) /tmp/test_curriculum

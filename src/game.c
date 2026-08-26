@@ -5,7 +5,11 @@
  * against either
  * platform_fbdev.c (Pi) or platform_sdl.c (macOS dev loop).
  *
- * Single-digit addition only for now (each operand 0-9).
+ * Stage 1 (see IMPLEMENTATION_PLAN.md): subitizing & counting, five
+ * mastery-gated steps with a cumulative, interleaved drill pool (see
+ * stage_subitizing.h). Answer input is keyboard digit + Enter for now; the
+ * physical NFC/button hardware (Stage H1-H2) plugs into the same "answer
+ * value + confirm" event this loop already drives from, once built.
  */
 #define _DEFAULT_SOURCE
 #include <stdio.h>
@@ -14,7 +18,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "curriculum.h"
 #include "platform.h"
+#include "progress.h"
+#include "stage_subitizing.h"
 #include "ttf_font.h"
 #include "viewport.h"
 
@@ -27,21 +34,23 @@ static const Color COLOR_TEXT = {235, 235, 240};
 static const Color COLOR_CORRECT = {40, 200, 90};
 static const Color COLOR_WRONG = {220, 60, 60};
 
-#define FEEDBACK_DURATION_MS 1200
+#define CORRECT_FEEDBACK_MS 1200
+#define WRONG_FEEDBACK_MS 2400 /* longer: there's corrective text to read */
+#define MASTERY_MSG_MS 2200
 
-#define EQ_Y 130
-#define EQ_HEIGHT 140
+#define PROMPT_Y 380
+#define PROMPT_HEIGHT 70
+#define ANS_Y 460
+#define ANS_HEIGHT 90
+#define CORRECTIVE_Y 420
+#define CORRECTIVE_HEIGHT 50
 
-/* Typed answer, shown larger since it's the primary interactive element. */
-#define ANS_Y 340
-#define ANS_HEIGHT 200
+/* Curriculum stage identifier persisted to disk. Only one exists so far;
+ * the field exists now so progress.dat's format doesn't need to change
+ * when Stage 2 is added. */
+#define STAGE_SUBITIZING 1
 
-typedef enum { STATE_PROBLEM, STATE_FEEDBACK } GameState;
-
-static void generate_problem(int *a, int *b) {
-    *a = rand() % 10;
-    *b = rand() % 10;
-}
+typedef enum { STATE_PROBLEM, STATE_FEEDBACK, STATE_MASTERY } GameState;
 
 static int key_to_digit(Key k) {
     if (k >= GK_0 && k <= GK_9) return k - GK_0;
@@ -65,10 +74,37 @@ int main(void) {
     }
     srand((unsigned)time(NULL));
 
+    SubitizeStep step = STEP_PERCEPTUAL_TO4;
+    SubitizeFact pool[SUBITIZE_MAX_FACTS];
+    FactScheduler sched;
+    MasteryTracker mastery;
+
+    int loaded_stage, loaded_subphase;
+    int pool_len;
+    if (progress_load(PROGRESS_PATH, &loaded_stage, &loaded_subphase,
+                       &sched) == 0 &&
+        loaded_stage == STAGE_SUBITIZING && loaded_subphase >= 0 &&
+        loaded_subphase <= STEP_DONE) {
+        step = (SubitizeStep)loaded_subphase;
+        pool_len = subitize_build_pool(step, pool);
+        if (pool_len != sched.num_facts) {
+            /* Corrupted/stale save: pool shape doesn't match. Start over. */
+            step = STEP_PERCEPTUAL_TO4;
+            pool_len = subitize_build_pool(step, pool);
+            sched_init(&sched, pool_len);
+        }
+    } else {
+        pool_len = subitize_build_pool(step, pool);
+        sched_init(&sched, pool_len);
+    }
+    mastery_init(&mastery);
+
     GameState state = STATE_PROBLEM;
     char answer_buf[3] = {0};
-    int a, b;
-    generate_problem(&a, &b);
+    int fact_id = sched_pick(&sched);
+    int quantity = pool[fact_id].quantity;
+    SubitizeLayout layout;
+    subitize_compute_layout(&pool[fact_id], &layout);
     int last_correct = 0;
     long feedback_start_ms = 0;
     int running = 1;
@@ -90,14 +126,47 @@ int main(void) {
                 answer_buf[strlen(answer_buf) - 1] = '\0';
                 dirty = 1;
             } else if (k == GK_ENTER && strlen(answer_buf) > 0) {
-                last_correct = (atoi(answer_buf) == a + b);
+                last_correct = (atoi(answer_buf) == quantity);
+                sched_record(&sched, fact_id, last_correct);
+                /* Only the current step's own new facts count toward
+                 * advancing it - earlier facts are drilled for retention
+                 * (spaced/interleaved), not re-assessed as "the skill". */
+                if (fact_id >= subitize_step_start_index(step)) {
+                    mastery_record(&mastery, last_correct);
+                }
+                progress_save(PROGRESS_PATH, STAGE_SUBITIZING, step, &sched);
                 feedback_start_ms = plat_time_ms();
                 state = STATE_FEEDBACK;
                 dirty = 1;
             }
         } else if (state == STATE_FEEDBACK) {
-            if (plat_time_ms() - feedback_start_ms >= FEEDBACK_DURATION_MS) {
-                generate_problem(&a, &b);
+            long elapsed = plat_time_ms() - feedback_start_ms;
+            long duration =
+                last_correct ? CORRECT_FEEDBACK_MS : WRONG_FEEDBACK_MS;
+            if (elapsed >= duration) {
+                if (step != STEP_DONE && mastery_met(&mastery)) {
+                    step = (SubitizeStep)(step + 1);
+                    pool_len = subitize_build_pool(step, pool);
+                    sched_grow(&sched, pool_len);
+                    mastery_init(&mastery);
+                    progress_save(PROGRESS_PATH, STAGE_SUBITIZING, step,
+                                  &sched);
+                    feedback_start_ms = plat_time_ms();
+                    state = STATE_MASTERY;
+                } else {
+                    fact_id = sched_pick(&sched);
+                    quantity = pool[fact_id].quantity;
+                    subitize_compute_layout(&pool[fact_id], &layout);
+                    answer_buf[0] = '\0';
+                    state = STATE_PROBLEM;
+                }
+                dirty = 1;
+            }
+        } else if (state == STATE_MASTERY) {
+            if (plat_time_ms() - feedback_start_ms >= MASTERY_MSG_MS) {
+                fact_id = sched_pick(&sched);
+                quantity = pool[fact_id].quantity;
+                subitize_compute_layout(&pool[fact_id], &layout);
                 answer_buf[0] = '\0';
                 state = STATE_PROBLEM;
                 dirty = 1;
@@ -112,19 +181,27 @@ int main(void) {
             vclear(COLOR_BG);
 
             if (state == STATE_PROBLEM) {
-                char eq[16];
-                snprintf(eq, sizeof(eq), "%d+%d=?", a, b);
-                draw_centered(EQ_Y, EQ_HEIGHT, COLOR_TEXT, eq);
+                subitize_draw_layout(&layout);
+                draw_centered(PROMPT_Y, PROMPT_HEIGHT, COLOR_TEXT,
+                              layout.prompt);
                 draw_centered(ANS_Y, ANS_HEIGHT, COLOR_TEXT,
                               answer_buf[0] ? answer_buf : "_");
-            } else { /* STATE_FEEDBACK */
+            } else if (state == STATE_FEEDBACK) {
                 if (last_correct) {
                     vdraw_thick_line(380, 310, 460, 400, 26, COLOR_CORRECT);
                     vdraw_thick_line(460, 400, 640, 200, 26, COLOR_CORRECT);
                 } else {
                     vdraw_thick_line(400, 200, 600, 400, 26, COLOR_WRONG);
                     vdraw_thick_line(600, 200, 400, 400, 26, COLOR_WRONG);
+                    char corrective[24];
+                    snprintf(corrective, sizeof(corrective), "It was %d",
+                             quantity);
+                    draw_centered(CORRECTIVE_Y, CORRECTIVE_HEIGHT, COLOR_TEXT,
+                                  corrective);
                 }
+            } else { /* STATE_MASTERY */
+                draw_centered(300, 70, COLOR_CORRECT,
+                              subitize_step_intro_message(step));
             }
 
             plat_present();

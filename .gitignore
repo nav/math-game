@@ -16,5 +16,8 @@ spike/fbdev_test
 *.o
 *.a
 
+# Runtime save data -- per-device curriculum progress, not source.
+src/progress.dat
+
 # OS/editor cruft
 .DS_Store
