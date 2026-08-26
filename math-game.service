@@ -1,0 +1,23 @@
+[Unit]
+Description=Math practice game
+After=multi-user.target
+Conflicts=getty@tty1.service
+
+[Service]
+Type=simple
+ExecStart=/opt/math-game/bin/math_game
+WorkingDirectory=/opt/math-game/bin
+Restart=on-failure
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+# Raw-fbdev apps holding a VT in graphics mode block VT switching
+# (confirmed: chvt hangs while this runs) without implementing full
+# cooperative VT-switch signaling, which isn't worth building for a
+# single-purpose kiosk box. Instead, make quitting the game (ESC, or a
+# crash that exhausts Restart=) the real escape hatch: always hand tty1
+# back to a normal login prompt when this service stops, for any reason.
+ExecStopPost=/usr/bin/systemctl start getty@tty1.service
+
+[Install]
+WantedBy=multi-user.target

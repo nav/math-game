@@ -1,0 +1,20 @@
+# SSH keys for accessing the Raspberry Pi -- never commit these
+id_ed25519
+id_ed25519.pub
+
+# Local working files -- device backups/snapshots and internal task notes,
+# not meant for the published repo. etc-backup.tgz in particular contains
+# the Pi's /etc/shadow and private SSH host keys.
+etc-backup.tgz
+packages-before.txt
+prompt.md
+
+# Build artifacts
+src/math_game
+spike/test_sdl
+spike/fbdev_test
+*.o
+*.a
+
+# OS/editor cruft
+.DS_Store
